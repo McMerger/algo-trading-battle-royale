@@ -1,0 +1,6 @@
+# Helm chart for Trading Battle Royale – just the essentials.
+apiVersion: v2
+name: trading-platform
+description: Multi-agent trading system (Python strategy + Go execution)
+version: 0.1.0
+appVersion: "1.0"
