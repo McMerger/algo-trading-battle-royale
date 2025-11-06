@@ -15,25 +15,25 @@ This module provides a real-time web interface for visualizing and managing the 
 
 ### Dashboard Components
 
-#### 🏆 Agent Battle Arena
+#### Agent Battle Arena
 - Live competition visualization with real-time rankings
 - Strategy performance heatmaps and comparison charts
 - Win/loss streaks and confidence intervals
 - Dynamic agent lifecycle management
 
-#### 📊 Performance Analytics
+#### Performance Analytics
 - Real-time P&L tracking and portfolio metrics
 - Risk management dashboards with exposure limits
 - Backtesting comparison with live performance
 - Market impact and execution quality analysis
 
-#### 🤖 Strategy Explanations
+#### Strategy Explanations
 - Instant LLM-generated trade rationale
 - Confidence scoring and model attribution
 - Market condition context and regime classification
 - Decision tree visualization for complex strategies
 
-#### 🔧 Control Panel
+#### Control Panel
 - Runtime agent deployment and configuration
 - Emergency stop and risk limit controls
 - Market data feed monitoring and health checks
