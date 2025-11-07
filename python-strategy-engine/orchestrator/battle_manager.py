@@ -1,185 +1,172 @@
-"""Battle manager orchestrates agent selection and keeps detailed history of strategy performance."""
+"""
+Battle manager orchestrates agent competitions.
+"""
 
 import asyncio
 from typing import List, Dict, Optional
 import numpy as np
 from agents.base_agent import BaseAgent, Signal
 from datetime import datetime
+from market_data.prediction_market_adapter import PredictionMarketFeed
 import os
 
-# Google Gemini import
+# Gemini for explanations (optional)
 try:
     from google import genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    print("Google Gemini not installed. Install with: pip install google-genai")
+
 
 class BattleManager:
-    """Manages agent competition, scores, and generates explanations for selected trades."""
-
-    def __init__(self, agents: List[BaseAgent], llm_enabled: bool = False, gemini_api_key: Optional[str] = None):
+    """
+    Runs agent competitions with prediction market event integration.
+    """
+    
+    def __init__(self, agents, event_config=None, llm_enabled=False, gemini_api_key=None):
         self.agents = agents
         self.current_epoch = 0
         self.epoch_wins = {agent.name: 0 for agent in agents}
-        self.llm_enabled = llm_enabled and GEMINI_AVAILABLE
         self.battle_history = []
-
+        
+        # Event configuration: map event names to market IDs
+        self.event_config = event_config or {}
+        self.event_feed = PredictionMarketFeed(use_mock=not event_config)
+        
+        # LLM for explanations
+        self.llm_enabled = llm_enabled and GEMINI_AVAILABLE
         if self.llm_enabled:
-            api_key = gemini_api_key or os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+            api_key = gemini_api_key or os.getenv('GEMINI_API_KEY')
             if not api_key:
-                print("No Gemini API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY environment variable.")
+                print("No Gemini API key found. Explanations will be rule-based.")
                 self.llm_enabled = False
             else:
                 self.gemini_client = genai.Client(api_key=api_key)
-                self.gemini_model = 'gemini-2.0-flash'  # Updated model name
-                print("Google Gemini initialized successfully.")
-
-    async def run_battle(self, market_data: Dict) -> Dict:
-        """Runs a competition round and records outcomes."""
+                self.gemini_model = 'gemini-2.0-flash'
+    
+    async def run_battle(self, market_data):
+        """Run one competition round with current market and event data."""
         self.current_epoch += 1
-
-        print(f"\nEpoch {self.current_epoch} beginning.")
-        print(f"Market data - Symbol: {market_data.get('symbol')} Price: ${market_data.get('price', 0):.2f}")
-
+        
+        print(f"\nEpoch {self.current_epoch}")
+        print(f"Market: {market_data.get('symbol')} @ ${market_data.get('price', 0):.2f}")
+        
+        # Fetch event data if configured
+        event_data = None
+        if self.event_config:
+            event_data = self.event_feed.get_events(self.event_config)
+            if event_data:
+                print("Event probabilities:")
+                for name, data in event_data.items():
+                    prob = data.get('yes_probability', 0)
+                    print(f"  {name}: {prob:.1%}")
+        
+        # Collect signals from all agents
         signals = []
         for agent in self.agents:
-            signal = agent.generate_signal(market_data)
+            signal = agent.generate_signal(market_data, event_data)
             if signal and signal.action != 'HOLD':
                 signals.append(signal)
-                print(f"Agent {agent.name}: {signal.action} {signal.size:.0f} shares ({signal.confidence:.1%} confidence)")
-
+                print(f"{agent.name}: {signal.action} {signal.size:.0f} @ {signal.confidence:.1%}")
+        
         if not signals:
-            print("No actionable signals for this round.")
+            print("No actionable signals this round")
             return {
                 'winning_signal': None,
                 'all_signals': [],
-                'explanation': 'No agents generated actionable signals.',
+                'explanation': 'No agents produced signals',
                 'epoch': self.current_epoch,
-                'timestamp': datetime.now().isoformat()
+                'event_data': event_data
             }
-
+        
+        # Select winner (epsilon-greedy with performance weighting)
         winner = self._select_winner(signals)
         self.epoch_wins[winner.agent_name] += 1
-
-        explanation = await self._generate_explanation(winner, signals, market_data)
-
+        
+        # Generate explanation
+        explanation = await self._generate_explanation(winner, signals, market_data, event_data)
+        
         result = {
             'winning_signal': winner,
             'all_signals': signals,
             'explanation': explanation,
             'epoch': self.current_epoch,
             'timestamp': datetime.now().isoformat(),
+            'event_data': event_data,
             'leaderboard': self.get_leaderboard()
         }
-
+        
         self.battle_history.append(result)
-
-        print(f"\nSelected winner: {winner.agent_name}")
-        print(f"Explanation: {explanation}\n")
-
+        
+        print(f"\nWinner: {winner.agent_name}")
+        print(f"Reason: {explanation}\n")
+        
         return result
-
-    def _select_winner(self, signals: List[Signal], epsilon: float = 0.15) -> Signal:
+    
+    def _select_winner(self, signals, epsilon=0.15):
+        """
+        Epsilon-greedy selection with performance weighting.
+        15% explore, 85% exploit best performer.
+        """
         if np.random.random() < epsilon:
             winner = np.random.choice(signals)
-            print(f"Exploration: randomly selected {winner.agent_name}")
+            print(f"[Explore] Randomly selected {winner.agent_name}")
             return winner
         else:
-            signal_scores = []
+            scores = []
             for signal in signals:
                 agent = next(a for a in self.agents if a.name == signal.agent_name)
-                win_rate_bonus = agent.win_rate if hasattr(agent, 'win_rate') else 0.5
-                epoch_win_bonus = self.epoch_wins[signal.agent_name] / max(self.current_epoch, 1)
-                score = (signal.confidence * 0.5) + (win_rate_bonus * 0.3) + (epoch_win_bonus * 0.2)
-                signal_scores.append((signal, score))
-            winner = max(signal_scores, key=lambda x: x[1])[0]
-            print(f"Exploitation: selected {winner.agent_name} for best mix of confidence and historical performance.")
+                
+                # Score = confidence + historical performance
+                win_rate = getattr(agent, 'win_rate', 0.5)
+                epoch_wins = self.epoch_wins[signal.agent_name] / max(self.current_epoch, 1)
+                
+                score = (signal.confidence * 0.5) + (win_rate * 0.3) + (epoch_wins * 0.2)
+                scores.append((signal, score))
+            
+            winner = max(scores, key=lambda x: x[1])[0]
+            print(f"[Exploit] Selected top performer {winner.agent_name}")
             return winner
-
-    async def _generate_explanation(self, winner: Signal, all_signals: List[Signal], market_data: Dict) -> str:
+    
+    async def _generate_explanation(self, winner, all_signals, market_data, event_data):
+        """Generate human explanation for the trade decision."""
         if not self.llm_enabled:
-            # Simple, transparent fallback
-            return self._generate_rule_based_explanation(winner, all_signals, market_data)
+            return self._rule_based_explanation(winner, all_signals, market_data, event_data)
+        
         try:
-            prompt = self._build_gemini_prompt(winner, all_signals, market_data)
+            prompt = self._build_explanation_prompt(winner, all_signals, market_data, event_data)
             response = self.gemini_client.models.generate_content(
                 model=self.gemini_model,
                 contents=prompt
             )
             return response.text.strip()
         except Exception as e:
-            print(f"Gemini API error: {e}. Using fallback explanation.")
-            return self._generate_rule_based_explanation(winner, all_signals, market_data)
+            print(f"LLM explanation failed: {e}")
+            return self._rule_based_explanation(winner, all_signals, market_data, event_data)
+    
+    def _rule_based_explanation(self, winner, all_signals, market_data, event_data):
+        """Fallback explanation without LLM."""
+        explanation = (f"{winner.agent_name} selected with {winner.confidence:.0%} confidence. "
+                      f"{winner.reason}")
+        
+        if event_data:
+            event_summary = ", ".join([f"{k}: {v.get('yes_probability', 0):.1%}" 
+                                      for k, v in event_data.items()])
+            explanation += f" Event context: {event_summary}."
+        
+        return explanation
+    
+    def _build_explanation_prompt(self, winner, all_signals, market_data, event_data):
+        """Build prompt for LLM explanation."""
+        prompt = f"""Trading competition round {self.current_epoch}.
 
-    def _build_gemini_prompt(self, winner: Signal, all_signals: List[Signal], market_data: Dict) -> str:
-        lines = [
-            f"Market Summary:",
-            f"- Symbol: {market_data.get('symbol', 'UNKNOWN')}",
-            f"- Price: ${market_data.get('price', 0):.2f}",
-            f"- Volume: {market_data.get('volume', 0):,}",
-            f"- Bid: ${market_data.get('bid', 0):.2f}",
-            f"- Ask: ${market_data.get('ask', 0):.2f}",
-            "",
-            "Agent Decisions:"
-        ]
-        lines.extend(self._format_signals_for_prompt(all_signals))
-        lines.append("")
-        lines.append(f"Selected Agent: {winner.agent_name}")
-        lines.append(f"Win reason: {winner.reason}")
-        lines.append(f"Performance report:")
-        lines.append(self._format_agent_history(winner.agent_name))
-        lines.append("")
-        lines.append("Write a short summary explaining why this agent was chosen and expected outcome.")
-        return "\n".join(lines)
+Market: {market_data.get('symbol')} @ ${market_data.get('price', 0):.2f}
+Volume: {market_data.get('volume', 0):,}
 
-    def _format_signals_for_prompt(self, signals: List[Signal]) -> List[str]:
-        result = []
-        for i, signal in enumerate(signals, 1):
-            result.append(
-                f"{i}. {signal.agent_name}: {signal.action} {signal.size:.0f} shares ({signal.confidence:.1%}) - {signal.reason}"
-            )
-        return result
-
-    def _format_agent_history(self, agent_name: str) -> str:
-        agent = next((a for a in self.agents if a.name == agent_name), None)
-        if not agent:
-            return "No history available"
-        stats = agent.get_stats()
-        return (
-            f"Total PnL: ${stats['pnl']:.2f}\n"
-            f"Win Rate: {stats['win_rate']:.1%}\n"
-            f"Total Trades: {stats['total_trades']}\n"
-            f"Sharpe Ratio: {stats['sharpe']:.2f}\n"
-            f"Epochs Won: {self.epoch_wins[agent_name]}"
-        )
-
-    def _generate_rule_based_explanation(self, winner: Signal, all_signals: List[Signal], market_data: Dict) -> str:
-        return (
-            f"{winner.agent_name} produced the highest-confidence signal ({winner.confidence:.0%}). "
-            f"Strategy: {winner.reason}. "
-            f"Market price was ${market_data.get('price', 0):.2f}, "
-            f"competed against {len(all_signals)-1} other agents. "
-            f"Expected trade: {winner.action} {winner.size:.0f} shares."
-        )
-
-    def get_leaderboard(self) -> List[Dict]:
-        leaderboard = []
-        for agent in self.agents:
-            stats = agent.get_stats()
-            stats['epoch_wins'] = self.epoch_wins[agent.name]
-            leaderboard.append(stats)
-        return sorted(leaderboard, key=lambda x: x['pnl'], reverse=True)
-
-    def print_leaderboard(self):
-        print("\nAgent Leaderboard and Performance:")
-        print(f"{'Agent':<20} {'PnL':>10} {'Win Rate':>10} {'Trades':>8} {'Sharpe':>8} {'Epochs Won':>12}")
-        print("-" * 70)
-        for agent_stats in self.get_leaderboard():
-            print(f"{agent_stats['name']:<20} "
-                  f"${agent_stats['pnl']:>9.2f} "
-                  f"{agent_stats['win_rate']:>9.1%} "
-                  f"{agent_stats['total_trades']:>8} "
-                  f"{agent_stats['sharpe']:>8.2f} "
-                  f"{agent_stats['epoch_wins']:>12}")
-        print("-" * 70 + "\n")
+"""
+        
+        if event_data:
+            prompt += "Event Probabilities:\n"
+            for name, data in event_data.items():
+                prob = data.get('yes_probability', 0)
+                prompt += f"- {name}: {prob:.1%
