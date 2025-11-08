@@ -1,107 +1,21 @@
 """
-Prediction market API adapters for Kalshi and Polymarket.
+Prediction market adapter for Polymarket.
 
-This is what sets this system apart: agents can trade on real-world event probabilities,
-not just price data. When Fed hike odds jump from 40% to 75%, that's actionable signal.
+Polymarket is crypto-native with broad event coverage: macro, politics, 
+crypto, culture. Public API requires no authentication for market data.
 """
 
 import requests
 from typing import Dict, Optional, List
 from datetime import datetime
-import os
-
-
-class KalshiAdapter:
-    """
-    Kalshi is a regulated prediction market for macro events.
-    Good for: Fed rates, elections, economic indicators.
-    
-    Docs: https://trading-api.kalshi.com/docs
-    """
-    
-    def __init__(self, api_key=None, use_demo=True):
-        self.api_key = api_key or os.getenv('KALSHI_API_KEY')
-        self.use_demo = use_demo or not self.api_key
-        
-        if self.use_demo:
-            self.base_url = "https://demo-api.kalshi.co/trade-api/v2"
-        else:
-            self.base_url = "https://trading-api.kalshi.com/trade-api/v2"
-        
-        self.headers = {}
-        if self.api_key:
-            self.headers["Authorization"] = f"Bearer {self.api_key}"
-    
-    def get_market_odds(self, ticker):
-        """
-        Fetch current odds for a market.
-        ticker example: 'FED-23DEC-T4.75' for Fed rate decision
-        
-        Returns dict with probabilities, or None if failed.
-        """
-        try:
-            url = f"{self.base_url}/markets/{ticker}"
-            resp = requests.get(url, headers=self.headers, timeout=10)
-            
-            if not resp.ok:
-                print(f"Kalshi API error {resp.status_code} for {ticker}")
-                return None
-            
-            data = resp.json()
-            market = data.get('market', {})
-            
-            # Kalshi prices are in cents, convert to probability
-            yes_bid = market.get('yes_bid', 50)
-            yes_ask = market.get('yes_ask', 50)
-            
-            # Use mid-price for probability estimate
-            yes_prob = (yes_bid + yes_ask) / 200.0 if yes_ask else yes_bid / 100.0
-            
-            return {
-                'source': 'kalshi',
-                'market_id': ticker,
-                'title': market.get('title', ''),
-                'yes_probability': yes_prob,
-                'no_probability': 1 - yes_prob,
-                'volume': market.get('volume', 0),
-                'close_time': market.get('close_time'),
-                'updated_at': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            print(f"Failed to fetch Kalshi market {ticker}: {e}")
-            return None
-    
-    def search_markets(self, series='FED', limit=10):
-        """Find active markets in a series (FED, INXD, etc)."""
-        try:
-            url = f"{self.base_url}/markets"
-            params = {'series_ticker': series, 'status': 'open', 'limit': limit}
-            resp = requests.get(url, headers=self.headers, params=params, timeout=10)
-            
-            if resp.ok:
-                return resp.json().get('markets', [])
-        except Exception as e:
-            print(f"Kalshi search failed: {e}")
-        
-        return []
-    
-    def get_fed_odds(self):
-        """Shortcut to get current Fed rate decision odds."""
-        markets = self.search_markets(series='FED', limit=5)
-        if markets:
-            ticker = markets[0].get('ticker')
-            if ticker:
-                return self.get_market_odds(ticker)
-        return None
 
 
 class PolymarketAdapter:
     """
-    Polymarket is crypto-native, broader event coverage.
-    Good for: crypto events, politics, culture, some finance.
+    Polymarket API adapter.
     
-    Uses CLOB (order book) API.
+    Docs: https://docs.polymarket.com/
+    Public read access, no API key needed for market data.
     """
     
     def __init__(self):
@@ -110,10 +24,15 @@ class PolymarketAdapter:
     
     def get_market_odds(self, condition_id):
         """
-        Fetch odds for a Polymarket condition.
-        condition_id is typically a hex string starting with 0x.
+        Fetch odds for a Polymarket market.
+        
+        Args:
+            condition_id: Market slug or condition ID
+                         Examples: 'will-bitcoin-be-above-100k-by-2025'
+                                  or hex ID '0x...'
         """
         try:
+            # Try as slug first
             url = f"{self.gamma_url}/markets/{condition_id}"
             resp = requests.get(url, timeout=10)
             
@@ -122,9 +41,11 @@ class PolymarketAdapter:
                 return None
             
             market = resp.json()
+            
+            # Extract token prices (these ARE the probabilities)
             tokens = market.get('tokens', [])
             
-            # Usually binary: YES and NO tokens
+            # Binary markets have YES and NO tokens
             yes_token = next((t for t in tokens if 'yes' in t.get('outcome', '').lower()), None)
             no_token = next((t for t in tokens if 'no' in t.get('outcome', '').lower()), None)
             
@@ -135,19 +56,28 @@ class PolymarketAdapter:
                 'source': 'polymarket',
                 'market_id': condition_id,
                 'title': market.get('question', ''),
+                'description': market.get('description', ''),
                 'yes_probability': yes_prob,
                 'no_probability': no_prob,
                 'volume': float(market.get('volume', 0)),
                 'liquidity': float(market.get('liquidity', 0)),
-                'updated_at': datetime.now().isoformat()
+                'close_time': market.get('endDate'),
+                'updated_at': datetime.now().isoformat(),
+                'active': market.get('active', False)
             }
             
         except Exception as e:
             print(f"Failed to fetch Polymarket {condition_id}: {e}")
             return None
     
-    def search_markets(self, query=None, limit=10):
-        """Search for active markets."""
+    def search_markets(self, query=None, limit=20):
+        """
+        Search for active markets.
+        
+        Args:
+            query: Search string (e.g., 'bitcoin', 'election', 'fed')
+            limit: Max results
+        """
         try:
             url = f"{self.gamma_url}/markets"
             params = {'limit': limit, 'active': True}
@@ -161,36 +91,65 @@ class PolymarketAdapter:
             print(f"Polymarket search failed: {e}")
         
         return []
+    
+    def get_trending_markets(self, limit=10):
+        """Get currently trending/high-volume markets."""
+        try:
+            url = f"{self.gamma_url}/markets"
+            params = {
+                'limit': limit,
+                'active': True,
+                'order': 'volume',  # Sort by volume
+                'ascending': False
+            }
+            
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.ok:
+                markets = resp.json()
+                return [{
+                    'slug': m.get('slug'),
+                    'title': m.get('question'),
+                    'volume': m.get('volume'),
+                    'yes_prob': m.get('tokens', [{}])[0].get('price', 0) if m.get('tokens') else 0
+                } for m in markets]
+        except Exception as e:
+            print(f"Failed to get trending: {e}")
+        
+        return []
 
 
 class PredictionMarketFeed:
     """
-    Main interface for getting event data.
-    Handles both Kalshi and Polymarket, with mock data fallback for testing.
-    
-    This is what agents actually interact with.
+    Main interface for event data.
+    Polymarket-only, with mock data fallback for testing.
     """
     
-    def __init__(self, kalshi_key=None, use_mock=False):
-        self.kalshi = KalshiAdapter(kalshi_key)
+    def __init__(self, use_mock=False):
         self.polymarket = PolymarketAdapter()
         self.use_mock = use_mock
         self.cache = {}
         
-        # Mock data for offline dev/testing
+        # Mock data for offline dev
         self.mock_events = {
-            'fed_hike': {
+            'btc_100k': {
                 'source': 'mock',
-                'title': 'Fed Rate Hike (Mock)',
+                'title': 'Bitcoin above $100k by EOY (Mock)',
+                'yes_probability': 0.45,
+                'volume': 500000,
+                'updated_at': datetime.now().isoformat()
+            },
+            'fed_rate': {
+                'source': 'mock',
+                'title': 'Fed Rate Above 5% (Mock)',
                 'yes_probability': 0.68,
-                'volume': 100000,
+                'volume': 250000,
                 'updated_at': datetime.now().isoformat()
             },
             'recession': {
                 'source': 'mock',
-                'title': 'US Recession 2024 (Mock)',
+                'title': 'US Recession 2025 (Mock)',
                 'yes_probability': 0.32,
-                'volume': 50000,
+                'volume': 300000,
                 'updated_at': datetime.now().isoformat()
             }
         }
@@ -199,24 +158,24 @@ class PredictionMarketFeed:
         """
         Fetch multiple event probabilities.
         
-        event_config is a dict like:
+        event_config format:
         {
-            'fed_hike': 'FED-DEC-T5.00',
-            'election': '0xabc123',
-            'recession': 'RECESSION-24'
+            'btc_100k': 'will-bitcoin-be-above-100k-by-2025',
+            'fed_rate': 'fed-rate-above-5-percent',
+            'election': 'presidential-election-2024'
         }
         
         Returns dict of event data with probabilities.
         """
         results = {}
         
-        for event_name, market_id in event_config.items():
-            # Try cache first (5 min TTL)
-            cache_key = f"{event_name}_{market_id}"
+        for event_name, market_slug in event_config.items():
+            # Check cache (5 min TTL)
+            cache_key = f"{event_name}_{market_slug}"
             if cache_key in self.cache:
                 cached = self.cache[cache_key]
-                cache_age = (datetime.now() - datetime.fromisoformat(cached['updated_at'])).seconds
-                if cache_age < 300:  # 5 minutes
+                age = (datetime.now() - datetime.fromisoformat(cached['updated_at'])).seconds
+                if age < 300:
                     results[event_name] = cached
                     continue
             
@@ -225,18 +184,13 @@ class PredictionMarketFeed:
                 results[event_name] = self.mock_events[event_name]
                 continue
             
-            # Fetch from API
-            odds = None
-            if market_id.startswith('0x'):
-                odds = self.polymarket.get_market_odds(market_id)
-            else:
-                odds = self.kalshi.get_market_odds(market_id)
+            # Fetch from Polymarket
+            odds = self.polymarket.get_market_odds(market_slug)
             
             if odds:
                 results[event_name] = odds
                 self.cache[cache_key] = odds
             elif event_name in self.mock_events:
-                # Fallback to mock if API fails
                 print(f"Using mock fallback for {event_name}")
                 results[event_name] = self.mock_events[event_name]
         
@@ -244,22 +198,31 @@ class PredictionMarketFeed:
     
     def add_events_to_market_data(self, market_data, event_config):
         """
-        This is the key integration: add event probabilities to standard market data.
-        
-        Agents get both price info AND event odds in one dict.
+        Add event probabilities to standard market data.
+        This is the key integration point.
         """
         enriched = market_data.copy()
         enriched['events'] = self.get_events(event_config)
         return enriched
     
-    def get_macro_snapshot(self):
-        """Quick snapshot of key macro events for regime assessment."""
-        snapshot = {'timestamp': datetime.now().isoformat(), 'events': {}}
+    def discover_relevant_markets(self, keywords):
+        """
+        Helper to find relevant Polymarket slugs for your events.
         
-        fed_data = self.kalshi.get_fed_odds()
-        if fed_data:
-            snapshot['events']['fed_hike'] = fed_data
-        elif 'fed_hike' in self.mock_events:
-            snapshot['events']['fed_hike'] = self.mock_events['fed_hike']
+        Example:
+            feed.discover_relevant_markets(['bitcoin', 'fed', 'election'])
+        """
+        print("\nDiscovering markets on Polymarket...\n")
         
-        return snapshot
+        for keyword in keywords:
+            print(f"Searching for: {keyword}")
+            markets = self.polymarket.search_markets(query=keyword, limit=5)
+            
+            if markets:
+                for m in markets[:3]:
+                    slug = m.get('slug', 'N/A')
+                    title = m.get('question', 'N/A')
+                    print(f"  - {slug}")
+                    print(f"    {title}\n")
+            else:
+                print(f"  No markets found\n")
