@@ -1,156 +1,147 @@
 """
-Explainability for agent decisions using SHAP/LIME or simple attribution.
+Explainability module for feature attribution.
 
-Shows which features (price, volume, event probabilities) drove each decision.
+Shows which factors (price, volume, event probabilities) drove each decision.
+Lightweight implementation - can be extended with SHAP/LIME for ML models.
 """
 
-import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List
+from collections import defaultdict
 
 
 class SimpleExplainer:
     """
-    Simple feature attribution for agent decisions.
-    
-    More sophisticated than just logging, less complex than full SHAP.
-    Good middle ground for most use cases.
+    Simple rule-based explainer for agent decisions.
+    Attributes decisions to price, volume, events, and technical factors.
     """
     
     def __init__(self):
-        self.feature_history = []
+        self.explanations = []
+        self.feature_impacts = defaultdict(list)
     
     def explain_signal(self, signal, market_data, event_data=None):
         """
-        Attribute a signal to its input features.
+        Generate explanation for a trading signal.
         
-        Returns dict with feature importances.
+        Returns dict with feature attributions.
         """
-        if not signal:
-            return None
-        
-        features = {}
-        importances = {}
-        
-        # Extract market features
-        features['price'] = market_data.get('price', 0)
-        features['volume'] = market_data.get('volume', 0)
-        features['volatility'] = market_data.get('volatility', 0)
-        
-        # Extract event features
-        if event_data:
-            for event_name, event in event_data.items():
-                prob = event.get('yes_probability', 0.5)
-                features[f'event_{event_name}'] = prob
-        
-        # Simple attribution based on signal reasoning
-        reason = signal.reason.lower()
-        
-        # Check which features are mentioned in reason
-        total_mentions = 0
-        for feature_name in features.keys():
-            if feature_name.replace('_', ' ') in reason or feature_name in reason:
-                importances[feature_name] = 1.0
-                total_mentions += 1
-        
-        # If event mentioned, give it high weight
-        if 'fed' in reason or 'event' in reason or 'probability' in reason:
-            for key in features:
-                if key.startswith('event_'):
-                    importances[key] = importances.get(key, 0) + 2.0
-                    total_mentions += 2
-        
-        # Normalize
-        if total_mentions > 0:
-            for key in importances:
-                importances[key] /= total_mentions
-        
         explanation = {
-            'signal': signal,
-            'features': features,
-            'importances': importances,
-            'primary_driver': max(importances.items(), key=lambda x: x[1])[0] if importances else None
+            'agent': signal.agent_name,
+            'action': signal.action,
+            'confidence': signal.confidence,
+            'reason': signal.reason,
+            'attributions': {}
         }
         
-        self.feature_history.append(explanation)
+        # Parse reason string to identify key factors
+        reason_lower = signal.reason.lower()
+        
+        # Check for price-related factors
+        if any(word in reason_lower for word in ['price', 'momentum', 'trend', 'moving average']):
+            explanation['attributions']['price'] = 0.4
+        
+        # Check for volume
+        if 'volume' in reason_lower:
+            explanation['attributions']['volume'] = 0.2
+        
+        # Check for event-driven factors
+        if event_data and any(word in reason_lower for word in ['fed', 'election', 'hike', 'odds', 'probability']):
+            explanation['attributions']['events'] = 0.5
+            
+            # Identify specific events
+            explanation['event_details'] = {}
+            for event_name, event_info in event_data.items():
+                if event_name in reason_lower or event_name.replace('_', ' ') in reason_lower:
+                    explanation['event_details'][event_name] = event_info.get('yes_probability', 0)
+        
+        # Check for technical indicators
+        if any(word in reason_lower for word in ['bollinger', 'rsi', 'macd', 'crossover']):
+            explanation['attributions']['technical'] = 0.3
+        
+        # Normalize attributions if they exist
+        if explanation['attributions']:
+            total = sum(explanation['attributions'].values())
+            if total > 0:
+                explanation['attributions'] = {
+                    k: v / total for k, v in explanation['attributions'].items()
+                }
+        
+        # Store for later analysis
+        self.explanations.append(explanation)
+        
+        for feature, impact in explanation['attributions'].items():
+            self.feature_impacts[feature].append(impact)
+        
         return explanation
     
     def print_explanation(self, explanation):
-        """Human-readable feature attribution."""
-        if not explanation:
-            return
+        """Print human-readable explanation."""
+        print(f"\nAgent: {explanation['agent']}")
+        print(f"Action: {explanation['action']} (confidence: {explanation['confidence']:.1%})")
+        print(f"Reason: {explanation['reason']}")
         
-        print("\nFeature Attribution:")
-        print("-" * 50)
+        if explanation['attributions']:
+            print("\nFeature Attribution:")
+            for feature, impact in sorted(explanation['attributions'].items(), 
+                                        key=lambda x: x[1], reverse=True):
+                bar_len = int(impact * 40)
+                bar = '█' * bar_len + '░' * (40 - bar_len)
+                print(f"  {feature:12} [{bar}] {impact:.1%}")
         
-        sorted_features = sorted(
-            explanation['importances'].items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-        
-        for feature, importance in sorted_features:
-            bar_len = int(importance * 30)
-            bar = '█' * bar_len + '░' * (30 - bar_len)
-            value = explanation['features'].get(feature, 0)
-            print(f"{feature:20} [{bar}] {importance:.1%}  (value: {value})")
-        
-        print(f"\nPrimary driver: {explanation['primary_driver']}")
-        print("-" * 50)
-    
-    def get_feature_summary(self):
-        """
-        Aggregate feature importance across all decisions.
-        Useful for understanding what drives your agents overall.
-        """
-        if not self.feature_history:
-            return {}
-        
-        all_importances = {}
-        counts = {}
-        
-        for exp in self.feature_history:
-            for feature, importance in exp['importances'].items():
-                all_importances[feature] = all_importances.get(feature, 0) + importance
-                counts[feature] = counts.get(feature, 0) + 1
-        
-        # Average importance
-        summary = {
-            feature: all_importances[feature] / counts[feature]
-            for feature in all_importances
-        }
-        
-        return dict(sorted(summary.items(), key=lambda x: x[1], reverse=True))
+        if 'event_details' in explanation:
+            print("\nEvent Probabilities:")
+            for event, prob in explanation['event_details'].items():
+                print(f"  {event}: {prob:.1%}")
     
     def print_summary(self):
-        """Print overall feature importance summary."""
-        summary = self.get_feature_summary()
+        """Print summary of all explanations."""
+        if not self.explanations:
+            print("No explanations generated yet")
+            return
         
-        print("\n" + "="*60)
-        print("OVERALL FEATURE IMPORTANCE")
-        print("="*60)
+        print("\n" + "="*70)
+        print("EXPLAINABILITY SUMMARY")
+        print("="*70)
         
-        for feature, avg_importance in summary.items():
-            bar_len = int(avg_importance * 40)
-            bar = '█' * bar_len + '░' * (40 - bar_len)
-            print(f"{feature:25} [{bar}] {avg_importance:.1%}")
+        print(f"\nTotal decisions analyzed: {len(self.explanations)}")
         
-        print("="*60 + "\n")
+        # Action distribution
+        actions = defaultdict(int)
+        for exp in self.explanations:
+            actions[exp['action']] += 1
+        
+        print("\nAction Distribution:")
+        for action, count in actions.items():
+            pct = count / len(self.explanations)
+            print(f"  {action}: {count} ({pct:.1%})")
+        
+        # Average feature importance
+        if self.feature_impacts:
+            print("\nAverage Feature Importance:")
+            for feature, impacts in sorted(self.feature_impacts.items(), 
+                                          key=lambda x: sum(x[1])/len(x[1]), 
+                                          reverse=True):
+                avg_impact = sum(impacts) / len(impacts)
+                bar_len = int(avg_impact * 40)
+                bar = '█' * bar_len + '░' * (40 - bar_len)
+                print(f"  {feature:12} [{bar}] {avg_impact:.1%}")
+        
+        print("="*70 + "\n")
 
 
-# For future: SHAP integration stub
 class SHAPExplainer:
     """
     Placeholder for SHAP-based explainability.
-    
-    SHAP (SHapley Additive exPlanations) provides rigorous feature attribution
-    but requires training a model. For now, use SimpleExplainer above.
-    
-    To implement:
-    1. pip install shap
-    2. Train surrogate model on (features → agent decisions)
-    3. Use SHAP to explain each prediction
+    Requires sklearn/shap libraries and trained models.
     """
     
     def __init__(self):
         self.model = None
-        raise NotImplementedError("SHAP integration coming soon. Use SimpleExplainer for now.")
+        print("SHAP explainer not yet implemented. Use SimpleExplainer for now.")
+    
+    def explain(self, model, features):
+        """
+        Would use SHAP to explain model predictions.
+        Implementation left for future enhancement.
+        """
+        raise NotImplementedError("SHAP integration coming soon")
