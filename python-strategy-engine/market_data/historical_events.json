@@ -1,0 +1,59 @@
+{
+  "description": "Historical prediction market data for backtesting",
+  "source": "Sample data based on actual Kalshi/Polymarket markets",
+  "events": [
+    {
+      "date": "2024-12-01",
+      "event": "fed_hike",
+      "yes_probability": 0.35,
+      "volume": 125000,
+      "source": "kalshi"
+    },
+    {
+      "date": "2024-12-08",
+      "event": "fed_hike",
+      "yes_probability": 0.42,
+      "volume": 180000,
+      "source": "kalshi"
+    },
+    {
+      "date": "2024-12-15",
+      "event": "fed_hike",
+      "yes_probability": 0.68,
+      "volume": 320000,
+      "source": "kalshi",
+      "note": "Strong jobs report shifted odds"
+    },
+    {
+      "date": "2024-12-18",
+      "event": "fed_hike",
+      "yes_probability": 0.85,
+      "volume": 450000,
+      "source": "kalshi",
+      "note": "FOMC meeting confirmed, odds spiked"
+    },
+    {
+      "date": "2024-11-01",
+      "event": "recession_2025",
+      "yes_probability": 0.28,
+      "volume": 95000,
+      "source": "polymarket"
+    },
+    {
+      "date": "2024-11-15",
+      "event": "recession_2025",
+      "yes_probability": 0.32,
+      "volume": 110000,
+      "source": "polymarket"
+    },
+    {
+      "date": "2024-12-01",
+      "event": "recession_2025",
+      "yes_probability": 0.35,
+      "volume": 125000,
+      "source": "polymarket",
+      "note": "Weak manufacturing data"
+    }
+  ],
+  "usage": "Load this file to replay historical event probability shifts for backtesting"
+}
