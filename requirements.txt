@@ -2,6 +2,7 @@
 numpy>=1.24.0
 pandas>=2.0.0
 requests>=2.31.0
+feedparser>=6.0.10
 
 # Google Gemini (optional, for LLM explanations)
 google-genai>=0.3.0
