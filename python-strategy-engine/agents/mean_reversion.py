@@ -1,41 +1,67 @@
-import numpy as np
+"""
+Mean reversion strategy using Bollinger Bands.
+Baseline strategy for comparison.
+"""
+
 from agents.base_agent import BaseAgent, Signal
+import numpy as np
+
 
 class MeanReversion(BaseAgent):
-    def __init__(self, name="Mean Reversion", period=20, std_dev=2.0):
+    """
+    Bollinger Band mean reversion.
+    Buy when price touches lower band, sell at upper band.
+    """
+    
+    def __init__(self, name="MeanReversion", window=20, num_std=2.0):
         super().__init__(name)
-        self.period = period
-        self.std_dev = std_dev
+        self.window = window
+        self.num_std = num_std
         self.price_history = []
-
-    def generate_signal(self, market_data):
-        price = market_data.get('price')
-        if price is None:
-            return None
+    
+    def generate_signal(self, market_data, event_data=None):
+        price = market_data.get('price', 0)
         self.price_history.append(price)
-        if len(self.price_history) < self.period:
+        
+        # Need enough history
+        if len(self.price_history) < self.window:
             return None
-        window = np.array(self.price_history[-self.period:])
-        ma = np.mean(window)
-        std = np.std(window)
-        upper = ma + self.std_dev * std
-        lower = ma - self.std_dev * std
-        if price <= lower:
+        
+        # Keep bounded
+        if len(self.price_history) > self.window + 10:
+            self.price_history.pop(0)
+        
+        # Calculate Bollinger Bands
+        recent_prices = self.price_history[-self.window:]
+        mean_price = np.mean(recent_prices)
+        std_price = np.std(recent_prices)
+        
+        upper_band = mean_price + self.num_std * std_price
+        lower_band = mean_price - self.num_std * std_price
+        
+        # Check position relative to bands
+        if price <= lower_band:
+            # Oversold, buy
             action = 'BUY'
-            confidence = min(0.6 + abs(price - lower) / ma, 0.95)
-        elif price >= upper:
+            distance = (lower_band - price) / lower_band
+            confidence = min(0.5 + distance * 5, 0.9)
+            reason = f"Price {price:.2f} at lower band {lower_band:.2f}"
+        elif price >= upper_band:
+            # Overbought, sell
             action = 'SELL'
-            confidence = min(0.6 + abs(price - upper) / ma, 0.95)
+            distance = (price - upper_band) / upper_band
+            confidence = min(0.5 + distance * 5, 0.9)
+            reason = f"Price {price:.2f} at upper band {upper_band:.2f}"
         else:
-            action = 'HOLD'
-            confidence = 0.5
+            return None
+        
         return Signal(
             timestamp=market_data.get('timestamp', 0),
             symbol=market_data.get('symbol', 'UNKNOWN'),
             action=action,
             confidence=confidence,
-            size=100 * confidence,
-            reason=f"Bollinger Bands: lower({lower:.2f}), upper({upper:.2f})",
+            size=100,
+            reason=reason,
             agent_name=self.name,
             price=price
         )
