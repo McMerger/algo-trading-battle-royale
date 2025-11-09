@@ -6,14 +6,13 @@ requests>=2.31.0
 # Google Gemini (optional, for LLM explanations)
 google-genai>=0.3.0
 
-# Async support
-asyncio>=3.4.3
+# Async is built-in to Python 3.8+, no separate install needed
 
-# Future ML/explainability (optional)
+# Optional: for future ML/explainability enhancements
 # scikit-learn>=1.3.0
 # shap>=0.42.0
 # lightgbm>=4.0.0
 
-# Dashboard (if building web interface)
+# Optional: for dashboard development
 # streamlit>=1.28.0
 # plotly>=5.17.0
