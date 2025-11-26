@@ -65,8 +65,7 @@ services:
         condition: service_healthy
     networks:
       - signalops-network
-    # Note: Currently runs demo in test mode. TODO: Implement proper gRPC server
-    command: python strategy-engine.py --mode test --mock
+    command: python grpc_server.py
 
   # Go Execution Engine - Order routing, WebSocket streaming, exchange APIs
   go-execution:
@@ -85,8 +84,7 @@ services:
       - "8080:8080"    # REST API
       - "8081:8081"    # WebSocket
       - "50050:50050"  # gRPC server
-    volumes:
-      - ./go-execution-core:/app
+    # No volume mount - using compiled binary from Docker image
     depends_on:
       postgres:
         condition: service_healthy

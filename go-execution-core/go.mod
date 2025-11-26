@@ -1,4 +1,4 @@
-module github.com/signalops/execution-engine
+module execution-engine
 
 go 1.21
 

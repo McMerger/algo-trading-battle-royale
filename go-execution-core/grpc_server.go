@@ -2,32 +2,22 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"time"
 
+	pb "execution-engine/pb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// ExecutionServiceServer implements the gRPC service
-// Note: This uses manual struct definitions until protoc generates the actual types
-type ExecutionServiceServer struct {
-	server *Server
-}
-
-func NewExecutionServiceServer(s *Server) *ExecutionServiceServer {
-	return &ExecutionServiceServer{server: s}
-}
-
-// SubmitOrder handles order submission requests
-func (e *ExecutionServiceServer) SubmitOrder(ctx context.Context, req *OrderRequestProto) (*OrderResponseProto, error) {
-	log.Printf("Received order: %s %s %s %.8f @ %.8f",
-		req.Side, req.Quantity, req.Symbol, req.Quantity, req.Price)
+// Implement pb.UnimplementedExecutionServiceServer to satisfy the interface
+// This ensures we implement all required methods from the generated code
+func (s *Server) SubmitOrder(ctx context.Context, req *pb.OrderRequest) (*pb.OrderResponse, error) {
+	log.Printf("gRPC Order: %s %s %.8f %s", req.Side, req.Symbol, req.Quantity, req.Exchange)
 
 	// Validate request
 	if req.Symbol == "" || req.Side == "" || req.Quantity <= 0 {
-		return &OrderResponseProto{
+		return &pb.OrderResponse{
 			Success:      false,
 			OrderId:      req.OrderId,
 			Status:       "REJECTED",
@@ -42,12 +32,12 @@ func (e *ExecutionServiceServer) SubmitOrder(ctx context.Context, req *OrderRequ
 	}
 
 	// Get exchange client
-	e.server.mu.RLock()
-	exchangeClient, exists := e.server.exchanges[exchange]
-	e.server.mu.RUnlock()
+	s.mu.RLock()
+	exchangeClient, exists := s.exchanges[exchange]
+	s.mu.RUnlock()
 
 	if !exists {
-		return &OrderResponseProto{
+		return &pb.OrderResponse{
 			Success:      false,
 			OrderId:      req.OrderId,
 			Status:       "REJECTED",
@@ -70,7 +60,7 @@ func (e *ExecutionServiceServer) SubmitOrder(ctx context.Context, req *OrderRequ
 	result, err := exchangeClient.SubmitOrder(order)
 	if err != nil {
 		log.Printf("Order submission failed: %v", err)
-		return &OrderResponseProto{
+		return &pb.OrderResponse{
 			Success:      false,
 			OrderId:      req.OrderId,
 			Status:       "FAILED",
@@ -79,12 +69,12 @@ func (e *ExecutionServiceServer) SubmitOrder(ctx context.Context, req *OrderRequ
 	}
 
 	// Log to database
-	if e.server.db != nil {
-		go e.logOrderToDatabase(req, result)
+	if s.db != nil {
+		go s.logOrderToDatabase(req, result)
 	}
 
 	// Return response
-	return &OrderResponseProto{
+	return &pb.OrderResponse{
 		Success:          true,
 		OrderId:          req.OrderId,
 		ExchangeOrderId:  result.ExchangeOrderID,
@@ -97,17 +87,17 @@ func (e *ExecutionServiceServer) SubmitOrder(ctx context.Context, req *OrderRequ
 }
 
 // GetMarketData retrieves current market data
-func (e *ExecutionServiceServer) GetMarketData(ctx context.Context, req *MarketDataRequestProto) (*MarketDataResponseProto, error) {
-	log.Printf("Market data request: %s on %s", req.Symbol, req.Exchange)
+func (s *Server) GetMarketData(ctx context.Context, req *pb.MarketDataRequest) (*pb.MarketDataResponse, error) {
+	log.Printf("gRPC Market data: %s on %s", req.Symbol, req.Exchange)
 
 	exchange := req.Exchange
 	if exchange == "" {
 		exchange = "binance"
 	}
 
-	e.server.mu.RLock()
-	exchangeClient, exists := e.server.exchanges[exchange]
-	e.server.mu.RUnlock()
+	s.mu.RLock()
+	exchangeClient, exists := s.exchanges[exchange]
+	s.mu.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("exchange %s not configured", exchange)
@@ -118,7 +108,7 @@ func (e *ExecutionServiceServer) GetMarketData(ctx context.Context, req *MarketD
 		return nil, fmt.Errorf("failed to get market data: %w", err)
 	}
 
-	return &MarketDataResponseProto{
+	return &pb.MarketDataResponse{
 		Symbol:            req.Symbol,
 		Exchange:          exchange,
 		Price:             data.Price,
@@ -128,20 +118,60 @@ func (e *ExecutionServiceServer) GetMarketData(ctx context.Context, req *MarketD
 		High_24H:          data.High24h,
 		Low_24H:           data.Low24h,
 		PriceChange_24H:   data.PriceChange,
+		PriceChangePct_24H: (data.PriceChange / data.Price) * 100,
 		Timestamp:         timestamppb.New(data.Timestamp),
 	}, nil
 }
 
+// StreamPrices streams real-time price updates (stub for now)
+func (s *Server) StreamPrices(req *pb.StreamRequest, stream pb.ExecutionService_StreamPricesServer) error {
+	log.Printf("gRPC Stream prices: %v", req.Symbols)
+	
+	// TODO: Implement actual streaming
+	// For now, return a single update
+	for _, symbol := range req.Symbols {
+		update := &pb.PriceUpdate{
+			Symbol:    symbol,
+			Price:     0.0,
+			Volume:    0.0,
+			Timestamp: timestamppb.Now(),
+		}
+		if err := stream.Send(update); err != nil {
+			return err
+		}
+	}
+	
+	return nil
+}
+
+// GetOrderStatus retrieves order status
+func (s *Server) GetOrderStatus(ctx context.Context, req *pb.OrderStatusRequest) (*pb.OrderStatusResponse, error) {
+	log.Printf("gRPC Order status: %s", req.OrderId)
+
+	// TODO: Implement actual order status tracking
+	// For now, return a placeholder
+	return &pb.OrderStatusResponse{
+		OrderId:       req.OrderId,
+		Status:        "FILLED",
+		FilledQuantity: 0.0,
+		AveragePrice:  0.0,
+		Fees:          0.0,
+		UpdatedAt:     timestamppb.Now(),
+	}, nil
+}
+
 // GetBalance retrieves account balance
-func (e *ExecutionServiceServer) GetBalance(ctx context.Context, req *BalanceRequestProto) (*BalanceResponseProto, error) {
+func (s *Server) GetBalance(ctx context.Context, req *pb.BalanceRequest) (*pb.BalanceResponse, error) {
 	exchange := req.Exchange
 	if exchange == "" {
 		exchange = "binance"
 	}
 
-	e.server.mu.RLock()
-	exchangeClient, exists := e.server.exchanges[exchange]
-	e.server.mu.RUnlock()
+	log.Printf("gRPC Balance: %s", exchange)
+
+	s.mu.RLock()
+	exchangeClient, exists := s.exchanges[exchange]
+	s.mu.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("exchange %s not configured", exchange)
@@ -153,9 +183,9 @@ func (e *ExecutionServiceServer) GetBalance(ctx context.Context, req *BalanceReq
 	}
 
 	// Convert to proto format
-	balances := make(map[string]*AssetBalanceProto)
+	balances := make(map[string]*pb.AssetBalance)
 	for asset, bal := range balance.Balances {
-		balances[asset] = &AssetBalanceProto{
+		balances[asset] = &pb.AssetBalance{
 			Asset:    bal.Asset,
 			Free:     bal.Free,
 			Locked:   bal.Locked,
@@ -164,7 +194,7 @@ func (e *ExecutionServiceServer) GetBalance(ctx context.Context, req *BalanceReq
 		}
 	}
 
-	return &BalanceResponseProto{
+	return &pb.BalanceResponse{
 		Exchange:      exchange,
 		Balances:      balances,
 		TotalValueUsd: balance.TotalValueUSD,
@@ -172,7 +202,8 @@ func (e *ExecutionServiceServer) GetBalance(ctx context.Context, req *BalanceReq
 	}, nil
 }
 
-func (e *ExecutionServiceServer) logOrderToDatabase(req *OrderRequestProto, result *OrderResult) {
+// logOrderToDatabase logs order to PostgreSQL
+func (s *Server) logOrderToDatabase(req *pb.OrderRequest, result *OrderResult) {
 	query := `
 		INSERT INTO trades
 		(order_id, strategy_name, symbol, side, quantity, price, executed_price,
@@ -180,7 +211,7 @@ func (e *ExecutionServiceServer) logOrderToDatabase(req *OrderRequestProto, resu
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 
-	_, err := e.server.db.Exec(query,
+	_, err := s.db.Exec(query,
 		req.OrderId,
 		req.StrategyName,
 		req.Symbol,
@@ -197,71 +228,7 @@ func (e *ExecutionServiceServer) logOrderToDatabase(req *OrderRequestProto, resu
 
 	if err != nil {
 		log.Printf("Failed to log order to database: %v", err)
+	} else {
+		log.Printf("✓ Order logged to database: %s", req.OrderId)
 	}
-}
-
-// Temporary proto message types (until protoc generates real ones)
-type OrderRequestProto struct {
-	OrderId      string
-	StrategyName string
-	Symbol       string
-	Side         string
-	Quantity     float64
-	Price        float64
-	OrderType    string
-	Exchange     string
-	Timestamp    *timestamppb.Timestamp
-	Metadata     map[string]string
-}
-
-type OrderResponseProto struct {
-	Success          bool
-	OrderId          string
-	ExchangeOrderId  string
-	Status           string
-	ExecutedPrice    float64
-	ExecutedQuantity float64
-	Fees             float64
-	ErrorMessage     string
-	ExecutedAt       *timestamppb.Timestamp
-}
-
-type MarketDataRequestProto struct {
-	Symbol            string
-	Exchange          string
-	IncludeOrderbook  bool
-	OrderbookDepth    int32
-}
-
-type MarketDataResponseProto struct {
-	Symbol            string
-	Exchange          string
-	Price             float64
-	Bid               float64
-	Ask               float64
-	Volume_24H        float64
-	High_24H          float64
-	Low_24H           float64
-	PriceChange_24H   float64
-	Timestamp         *timestamppb.Timestamp
-}
-
-type BalanceRequestProto struct {
-	Exchange string
-	Assets   []string
-}
-
-type BalanceResponseProto struct {
-	Exchange      string
-	Balances      map[string]*AssetBalanceProto
-	TotalValueUsd float64
-	Timestamp     *timestamppb.Timestamp
-}
-
-type AssetBalanceProto struct {
-	Asset    string
-	Free     float64
-	Locked   float64
-	Total    float64
-	ValueUsd float64
 }

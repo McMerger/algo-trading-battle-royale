@@ -170,19 +170,110 @@ class ExecutionClient:
             }
 
     def _submit_order_grpc(self, order: Dict) -> Dict:
-        """Submit order via gRPC (future implementation)."""
-        # TODO: Implement after protoc code generation
-        return self._submit_order_http(order)
+        """Submit order via gRPC."""
+        try:
+            from grpc_generated import execution_pb2, execution_pb2_grpc
+            
+            # Create gRPC stub
+            stub = execution_pb2_grpc.ExecutionServiceStub(self.grpc_channel)
+            
+            # Create request
+            request = execution_pb2.OrderRequest(
+                order_id=order['order_id'],
+                strategy_name=order['strategy_name'],
+                symbol=order['symbol'],
+                side=order['side'],
+                quantity=order['quantity'],
+                price=order['price'],
+                order_type=order['order_type'],
+                exchange=order['exchange']
+            )
+            
+            # Call gRPC service
+            response = stub.SubmitOrder(request, timeout=10)
+            
+            return {
+                'success': response.success,
+                'order_id': response.order_id,
+                'exchange_order_id': response.exchange_order_id,
+                'status': response.status,
+                'executed_price': response.executed_price,
+                'executed_quantity': response.executed_quantity,
+                'fees': response.fees,
+                'error': response.error_message if not response.success else None
+            }
+        except Exception as e:
+            print(f"gRPC call failed: {e}, falling back to HTTP")
+            return self._submit_order_http(order)
 
     def _get_market_data_grpc(self, symbol: str, exchange: str) -> Dict:
-        """Get market data via gRPC (future implementation)."""
-        # TODO: Implement after protoc code generation
-        return self._get_market_data_http(symbol, exchange)
+        """Get market data via gRPC."""
+        try:
+            from grpc_generated import execution_pb2, execution_pb2_grpc
+            
+            # Create gRPC stub
+            stub = execution_pb2_grpc.ExecutionServiceStub(self.grpc_channel)
+            
+            # Create request
+            request = execution_pb2.MarketDataRequest(
+                symbol=symbol,
+                exchange=exchange
+            )
+            
+            # Call gRPC service
+            response = stub.GetMarketData(request, timeout=10)
+            
+            return {
+                'symbol': response.symbol,
+                'exchange': response.exchange,
+                'price': response.price,
+                'bid': response.bid,
+                'ask': response.ask,
+                'volume_24h': response.volume_24h,
+                'high_24h': response.high_24h,
+                'low_24h': response.low_24h,
+                'price_change_24h': response.price_change_24h,
+                'timestamp': response.timestamp.ToDatetime().isoformat() if response.timestamp else None
+            }
+        except Exception as e:
+            print(f"gRPC call failed: {e}, falling back to HTTP")
+            return self._get_market_data_http(symbol, exchange)
 
     def _get_balance_grpc(self, exchange: str) -> Dict:
-        """Get balance via gRPC (future implementation)."""
-        # TODO: Implement after protoc code generation
-        return self._get_balance_http(exchange)
+        """Get balance via gRPC."""
+        try:
+            from grpc_generated import execution_pb2, execution_pb2_grpc
+            
+            # Create gRPC stub
+            stub = execution_pb2_grpc.ExecutionServiceStub(self.grpc_channel)
+            
+            # Create request
+            request = execution_pb2.BalanceRequest(
+                exchange=exchange
+            )
+            
+            # Call gRPC service
+            response = stub.GetBalance(request, timeout=10)
+            
+            # Convert balances
+            balances = {}
+            for asset, balance in response.balances.items():
+                balances[asset] = {
+                    'free': balance.free,
+                    'locked': balance.locked,
+                    'total': balance.total,
+                    'value_usd': balance.value_usd
+                }
+            
+            return {
+                'exchange': response.exchange,
+                'balances': balances,
+                'total_value_usd': response.total_value_usd,
+                'timestamp': response.timestamp.ToDatetime().isoformat() if response.timestamp else None
+            }
+        except Exception as e:
+            print(f"gRPC call failed: {e}, falling back to HTTP")
+            return self._get_balance_http(exchange)
 
     def close(self):
         """Close gRPC channel."""

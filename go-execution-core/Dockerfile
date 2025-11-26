@@ -2,8 +2,8 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /build
 
-# Install build dependencies
-RUN apk add --no-cache git gcc musl-dev
+# Install build dependencies including protobuf
+RUN apk add --no-cache git gcc musl-dev protobuf protobuf-dev
 
 # Copy go mod files
 COPY go-execution-core/go.mod go-execution-core/go.sum* ./
@@ -11,11 +11,30 @@ COPY go-execution-core/go.mod go-execution-core/go.sum* ./
 # Download dependencies
 RUN go mod download || go mod download
 
-# Copy source code
+# Install protoc Go plugins
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
+RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
+
+# Copy source code first
 COPY go-execution-core/ ./
 
-# Build the binary
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o execution-engine .
+# Copy proto files and generate code in the pb subdirectory
+COPY proto/ /build/proto/
+RUN mkdir -p pb && \
+    protoc -I/build/proto \
+    --go_out=./pb \
+    --go_opt=paths=source_relative \
+    --go-grpc_out=./pb \
+    --go-grpc_opt=paths=source_relative \
+    /build/proto/execution.proto
+
+# After generating proto files, download all dependencies including from generated code
+# Use go get to download without strict verification
+RUN go get -d ./... || true
+RUN go mod download
+
+# Build the binary with GO111MODULE and GOPROXY settings
+RUN CGO_ENABLED=1 GOOS=linux GO111MODULE=on go build -mod=mod -a -installsuffix cgo -ldflags="-w -s" -o execution-engine .
 
 # Final stage
 FROM alpine:latest

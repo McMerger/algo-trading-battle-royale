@@ -19,18 +19,21 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+
+	pb "execution-engine/pb"
 )
 
 type Config struct {
-	GRPCPort       string
-	HTTPPort       string
-	DatabaseURL    string
-	RedisURL       string
-	BinanceAPIKey  string
-	BinanceSecret  string
+	GRPCPort      string
+	HTTPPort      string
+	DatabaseURL   string
+	RedisURL      string
+	BinanceAPIKey string
+	BinanceSecret string
 }
 
 type Server struct {
+	pb.UnimplementedExecutionServiceServer
 	config    *Config
 	db        *sql.DB
 	redis     *redis.Client
@@ -40,12 +43,12 @@ type Server struct {
 
 func loadConfig() *Config {
 	return &Config{
-		GRPCPort:       getEnv("GRPC_PORT", "50050"),
-		HTTPPort:       getEnv("HTTP_PORT", "8080"),
-		DatabaseURL:    getEnv("DATABASE_URL", ""),
-		RedisURL:       getEnv("REDIS_URL", "redis:6379"),
-		BinanceAPIKey:  getEnv("BINANCE_API_KEY", ""),
-		BinanceSecret:  getEnv("BINANCE_SECRET_KEY", ""),
+		GRPCPort:      getEnv("GRPC_PORT", "50050"),
+		HTTPPort:      getEnv("HTTP_PORT", "8080"),
+		DatabaseURL:   getEnv("DATABASE_URL", ""),
+		RedisURL:      getEnv("REDIS_URL", "redis:6379"),
+		BinanceAPIKey: getEnv("BINANCE_API_KEY", ""),
+		BinanceSecret: getEnv("BINANCE_SECRET_KEY", ""),
 	}
 }
 
@@ -119,8 +122,8 @@ func (s *Server) startGRPCServer() {
 	}
 
 	grpcServer := grpc.NewServer()
-	// Register gRPC service here (will implement after protobuf generation)
-	// pb.RegisterExecutionServiceServer(grpcServer, s)
+	// Register gRPC ExecutionService
+	pb.RegisterExecutionServiceServer(grpcServer, s)
 
 	log.Printf("✓ gRPC server listening on port %s", s.config.GRPCPort)
 
@@ -149,6 +152,12 @@ func (s *Server) startHTTPServer() {
 
 	// REST API endpoints (fallback for Python client)
 	s.registerRESTEndpoints(mux)
+
+	// Strategy management endpoints
+	s.registerStrategyEndpoints(mux)
+
+	// Portfolio & risk endpoints
+	s.registerPortfolioEndpoints(mux)
 
 	log.Printf("✓ HTTP server listening on port %s", s.config.HTTPPort)
 
@@ -239,25 +248,25 @@ type OrderResult struct {
 }
 
 type OrderStatus struct {
-	OrderID       string
-	Status        string
-	FilledQty     float64
-	AveragePrice  float64
-	Fees          float64
-	UpdatedAt     time.Time
+	OrderID      string
+	Status       string
+	FilledQty    float64
+	AveragePrice float64
+	Fees         float64
+	UpdatedAt    time.Time
 }
 
 type Balance struct {
-	Exchange     string
-	Balances     map[string]AssetBalance
+	Exchange      string
+	Balances      map[string]AssetBalance
 	TotalValueUSD float64
-	Timestamp    time.Time
+	Timestamp     time.Time
 }
 
 type AssetBalance struct {
-	Asset     string
-	Free      float64
-	Locked    float64
-	Total     float64
-	ValueUSD  float64
+	Asset    string
+	Free     float64
+	Locked   float64
+	Total    float64
+	ValueUSD float64
 }

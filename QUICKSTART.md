@@ -2,6 +2,8 @@
 
 Get SignalOps running in under 5 minutes with Docker Compose.
 
+> **📢 Note:** We are actively migrating to a production-grade Next.js frontend (see [implementation_plan.md](implementation_plan.md)). The current Streamlit dashboard is fully functional and production-ready.
+
 ## Prerequisites
 
 - **Docker** & **Docker Compose** installed ([Get Docker](https://docs.docker.com/get-docker/))
@@ -12,8 +14,8 @@ Get SignalOps running in under 5 minutes with Docker Compose.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/signalops.git
-cd signalops
+git clone https://github.com/McMerger/signal-ops.git
+cd signal-ops
 
 # Copy environment template
 cp .env.example .env

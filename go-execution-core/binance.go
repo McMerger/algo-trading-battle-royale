@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,15 +11,74 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 )
 
+// RateLimiter implements token bucket algorithm for Binance API rate limiting
+// Binance limit: 1200 requests/minute = 20 requests/second
+type RateLimiter struct {
+	tokens     float64
+	maxTokens  float64
+	refillRate float64 // tokens per second
+	lastRefill time.Time
+	mu         sync.Mutex
+}
+
+func NewRateLimiter(requestsPerSecond float64) *RateLimiter {
+	return &RateLimiter{
+		tokens:     requestsPerSecond,
+		maxTokens:  requestsPerSecond,
+		refillRate: requestsPerSecond,
+		lastRefill: time.Now(),
+	}
+}
+
+func (rl *RateLimiter) Wait(ctx context.Context) error {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	// Refill tokens based on time elapsed
+	now := time.Now()
+	elapsed := now.Sub(rl.lastRefill).Seconds()
+	rl.tokens = min(rl.maxTokens, rl.tokens+elapsed*rl.refillRate)
+	rl.lastRefill = now
+
+	// If we have tokens, consume one and proceed
+	if rl.tokens >= 1.0 {
+		rl.tokens -= 1.0
+		return nil
+	}
+
+	// Calculate wait time needed
+	waitTime := time.Duration((1.0-rl.tokens)/rl.refillRate*1000) * time.Millisecond
+	rl.mu.Unlock()
+
+	// Wait with context support
+	select {
+	case <-time.After(waitTime):
+		rl.mu.Lock()
+		rl.tokens = 0
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // BinanceExchange implements Exchange interface for Binance
 type BinanceExchange struct {
-	apiKey    string
-	apiSecret string
-	baseURL   string
-	client    *http.Client
+	apiKey      string
+	apiSecret   string
+	baseURL     string
+	client      *http.Client
+	rateLimiter *RateLimiter
 }
 
 func NewBinanceExchange(apiKey, apiSecret string) *BinanceExchange {
@@ -29,6 +89,7 @@ func NewBinanceExchange(apiKey, apiSecret string) *BinanceExchange {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		rateLimiter: NewRateLimiter(18.0), // 18 req/s = 1080 req/min (safe margin under 1200 limit)
 	}
 }
 
@@ -151,15 +212,15 @@ func (b *BinanceExchange) SubmitOrder(order *Order) (*OrderResult, error) {
 	}
 
 	var orderResp struct {
-		OrderID       int64  `json:"orderId"`
-		Symbol        string `json:"symbol"`
-		Status        string `json:"status"`
-		ExecutedQty   string `json:"executedQty"`
+		OrderID             int64  `json:"orderId"`
+		Symbol              string `json:"symbol"`
+		Status              string `json:"status"`
+		ExecutedQty         string `json:"executedQty"`
 		CummulativeQuoteQty string `json:"cummulativeQuoteQty"`
-		Fills         []struct {
-			Price       string `json:"price"`
-			Qty         string `json:"qty"`
-			Commission  string `json:"commission"`
+		Fills               []struct {
+			Price      string `json:"price"`
+			Qty        string `json:"qty"`
+			Commission string `json:"commission"`
 		} `json:"fills"`
 	}
 

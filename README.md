@@ -35,6 +35,10 @@ SignalOps is a polyglot trading engine that treats every decision as an explicit
 - **TypeScript** (Control Interface): Real-time dashboard, strategy builder, trade approval workflow
 - **C++** (Performance Critical): Order book processing, signal calculation for latency-sensitive operations
 
+> **⚠️ Frontend Migration Planned**
+> The current Streamlit dashboard is a **temporary MVP**. We plan to migrate to a production-grade **Next.js 14 + TypeScript** frontend with WebSocket support, real-time charting, and proper state management. Streamlit remains fully functional for now but will be replaced.
+> **Track Progress:** [implementation_plan.md](implementation_plan.md)
+
 **Deployment:** Kubernetes on AWS (EKS) with auto-scaling for data ingestion workloads.
 
 ## Key Capabilities
@@ -236,8 +240,8 @@ class GrahamDefensiveStrategy:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/signalops.git
-cd signalops
+git clone https://github.com/McMerger/signal-ops.git
+cd signal-ops
 
 # Python strategy engine
 cd python-strategy-engine
@@ -257,9 +261,14 @@ go mod download
 cd ../java-risk-manager
 mvn install
 
-# TypeScript dashboard (coming soon)
-cd ../typescript-dashboard
-npm install
+# Current Dashboard: Streamlit (temporary MVP - will be replaced)
+cd ../dashboard
+pip install -r requirements.txt
+streamlit run app.py
+
+# Next.js Dashboard (planned migration)
+# cd ../frontend
+# npm install && npm run dev
 
 # Start all services (requires Docker Compose)
 cd ..
@@ -325,18 +334,19 @@ strategy:
 - **Event-Driven Agents**: Fed rate, macro event, and custom event handlers
 - **Explainability System**: Structured decision logs with optional LLM analysis
 - **Stress Testing**: Scenario injection for adversarial testing
-- **Go Execution Core**: Basic order routing and API management
+- **Go Execution Core**: REST APIs for orders, strategies, portfolio, and risk management
+- **Streamlit Dashboard**: Fully functional MVP with real-time monitoring (production-ready)
 - **Kubernetes Configs**: Helm charts for container orchestration
 
-### 🚧 In Development (Version 0.2 - Q1 2026)
-- **TypeScript Dashboard**: Real-time strategy builder and trade feed
+### 🚧 In Active Development (Version 0.2)
+- **Next.js Dashboard**: Production-grade TypeScript frontend to replace temporary Streamlit MVP
 - **Java Risk Manager**: gRPC-based position tracking and PnL calculation
 - **Multi-Exchange Support**: Binance, Coinbase, Kraken integration
 - **On-Chain Data Adapters**: DeFiLlama, Dune Analytics connectors
 - **Fundamental Data**: Yahoo Finance, SEC EDGAR integration
 - **Docker Compose**: Full local development environment
 
-### 📋 Planned (Version 1.0 - Q2 2026)
+### 📋 Planned (Version 1.0)
 - **C++ Signal Core**: SIMD-optimized order book processing
 - **Gemini API Integration**: LLM post-trade analysis
 - **Advanced Backtesting**: Regime detection and walk-forward optimization
@@ -389,12 +399,12 @@ python strategy-engine.py --mode stress
 ## Contributing
 
 Priority areas for contribution:
+- **Next.js dashboard migration** (replacing temporary Streamlit frontend)
 - Additional data source adapters (Kalshi, Manifold Markets, alternative on-chain APIs)
+- Java risk management service
 - Language-specific performance optimizations
 - Strategy templates and backtests
 - Documentation improvements
-- TypeScript dashboard implementation
-- Java risk management service
 - C++ signal processing core
 
 See `CONTRIBUTING.md` for technical guidelines and PR process.
@@ -419,7 +429,6 @@ MIT License. See `LICENSE` file for full terms.
 
 - GitHub Issues: Bug reports and feature requests
 - Documentation: Full technical docs (in development)
-- Commercial Support: enterprise@signalops.io
 
 ---
 
