@@ -1,0 +1,137 @@
+// SignalOps gRPC Service Definitions
+// Defines communication between Python Strategy Engine and Go Execution Engine
+
+syntax = "proto3";
+
+package signalops;
+
+option go_package = "github.com/signalops/execution-engine/pb";
+
+import "google/protobuf/timestamp.proto";
+
+// Execution Service - Handles order submission and market data
+service ExecutionService {
+  // Submit a trading order
+  rpc SubmitOrder(OrderRequest) returns (OrderResponse);
+
+  // Get current market data for a symbol
+  rpc GetMarketData(MarketDataRequest) returns (MarketDataResponse);
+
+  // Stream real-time price updates
+  rpc StreamPrices(StreamRequest) returns (stream PriceUpdate);
+
+  // Get order status
+  rpc GetOrderStatus(OrderStatusRequest) returns (OrderStatusResponse);
+
+  // Get account balance
+  rpc GetBalance(BalanceRequest) returns (BalanceResponse);
+}
+
+// Order request from strategy engine
+message OrderRequest {
+  string order_id = 1;
+  string strategy_name = 2;
+  string symbol = 3;
+  string side = 4;  // BUY or SELL
+  double quantity = 5;
+  double price = 6;  // Limit price (0 for market order)
+  string order_type = 7;  // MARKET, LIMIT
+  string exchange = 8;  // binance, coinbase, kraken
+  google.protobuf.Timestamp timestamp = 9;
+  map<string, string> metadata = 10;  // Additional context
+}
+
+message OrderResponse {
+  bool success = 1;
+  string order_id = 2;
+  string exchange_order_id = 3;
+  string status = 4;  // PENDING, FILLED, REJECTED, FAILED
+  double executed_price = 5;
+  double executed_quantity = 6;
+  double fees = 7;
+  string error_message = 8;
+  google.protobuf.Timestamp executed_at = 9;
+}
+
+// Market data request
+message MarketDataRequest {
+  string symbol = 1;
+  string exchange = 2;
+  bool include_orderbook = 3;
+  int32 orderbook_depth = 4;  // L2 depth (default 10)
+}
+
+message MarketDataResponse {
+  string symbol = 1;
+  string exchange = 2;
+  double price = 3;
+  double bid = 4;
+  double ask = 5;
+  double volume_24h = 6;
+  double high_24h = 7;
+  double low_24h = 8;
+  double price_change_24h = 9;
+  double price_change_pct_24h = 10;
+  OrderBook orderbook = 11;
+  google.protobuf.Timestamp timestamp = 12;
+}
+
+message OrderBook {
+  repeated OrderBookLevel bids = 1;
+  repeated OrderBookLevel asks = 2;
+}
+
+message OrderBookLevel {
+  double price = 1;
+  double quantity = 2;
+}
+
+// Streaming price updates
+message StreamRequest {
+  repeated string symbols = 1;
+  string exchange = 2;
+  int32 throttle_ms = 3;  // Min milliseconds between updates
+}
+
+message PriceUpdate {
+  string symbol = 1;
+  double price = 2;
+  double volume = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Order status query
+message OrderStatusRequest {
+  string order_id = 1;
+  string exchange_order_id = 2;
+}
+
+message OrderStatusResponse {
+  string order_id = 1;
+  string status = 2;
+  double filled_quantity = 3;
+  double average_price = 4;
+  double fees = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+// Balance query
+message BalanceRequest {
+  string exchange = 1;
+  repeated string assets = 2;  // Empty = all assets
+}
+
+message BalanceResponse {
+  string exchange = 1;
+  map<string, AssetBalance> balances = 2;
+  double total_value_usd = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message AssetBalance {
+  string asset = 1;
+  double free = 2;  // Available balance
+  double locked = 3;  // In orders
+  double total = 4;  // Free + locked
+  double value_usd = 5;
+}
